@@ -4,7 +4,7 @@ import * as dotenv from 'dotenv';
 import { LoggerService } from './logger/logger.service';
 import { Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
-import { SwaggerModule, DocumentBuilder, ApiBearerAuth } from '@nestjs/swagger';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 dotenv.config({ path: `.${process.env.NODE_ENV}.env` });
 

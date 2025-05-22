@@ -1,4 +1,4 @@
-import { Global, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
 
 // here we have provided the prismaService into providers array
