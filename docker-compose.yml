@@ -1,0 +1,232 @@
+version: "3.9"
+
+networks:
+  kong-net:
+
+services:
+  kong-database:
+    image: "postgres:9.6"
+    container_name: kong-db
+    hostname: "psql"
+    environment:
+      POSTGRES_USER: kong
+      POSTGRES_DB: kong
+      POSTGRES_PASSWORD: kongpass
+    networks:
+      - kong-net
+    ports:
+      - 5454:5432
+    volumes:
+      - ./postgres/db/:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure
+
+  #Rabbitmq Services
+
+  rabbitmq:
+    image: rabbitmq:3.10.1-management
+    container_name: "rabbitmq-micro"
+    ports:
+      - 5672:5672
+      - 15672:15672
+    networks:
+      - kong-net
+    restart: on-failure
+
+  kong-migration:
+    image: "kong/kong-gateway:2.8.1.0-alpine"
+    command: "kong migrations bootstrap && kong migrations up && kong migrations finish"
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_PASSWORD: kongpass
+      KONG_PG_USER: kong
+      KON_PG_DATABASE: kong
+    networks:
+      - kong-net
+    restart: on-failure
+
+  kong:
+    image: "kong/kong-gateway:2.8.1.0-alpine"
+    container_name: kong-api
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpass
+      KONG_PROXY_ACCESS_LOG: "/dev/stdout"
+      KONG_ADMIN_ACCESS_LOG: "/dev/stdout"
+      KONG_PROXY_ERROR_LOG: "/dev/stderr"
+      KONG_ADMIN_ERROR_LOG: "/dev/stderr"
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+    ports:
+      - 8000:8000
+      - 8001:8001
+    networks:
+      - kong-net
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: on-failure
+
+    # mognodb replica sets and main server
+
+  mongo1:
+    hostname: mongo1
+    image: mongo:5.0.9
+    expose:
+      - 27017
+    ports:
+      - 30001:27017
+    restart: on-failure
+    networks:
+      - kong-net
+    volumes:
+      - ./mongodb/data:/data/db
+    command: mongod --replSet myMongoSet
+  mongo2:
+    hostname: mongo2
+    image: mongo:5.0.9
+    expose:
+      - 27017
+    ports:
+      - 30002:27017
+    networks:
+      - kong-net
+    restart: on-failure
+    command: mongod --replSet myMongoSet
+  mongo3:
+    hostname: mongo3
+    image: mongo:5.0.9
+    expose:
+      - 27017
+    ports:
+      - 30003:27017
+    networks:
+      - kong-net
+    restart: on-failure
+    command: mongod --replSet myMongoSet
+
+  # finally, we can define the initialization server
+  # this runs the `rs.initiate` command to intialize
+  # the replica set and connect the three servers to each other
+  mongoinit:
+    image: mongo
+    # this container will exit after executing the command
+    restart: "no"
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    networks:
+      - kong-net
+    command: >
+      mongosh --host mongo1:27017 --eval 
+      '
+      config = {
+      "_id" : "myMongoSet",
+      "members" : [
+        {
+          "_id" : 0,
+          "host" : "mongo1:27017"
+        },
+        {
+          "_id" : 1,
+          "host" : "mongo2:27017"
+        },
+        {
+          "_id" : 2,
+          "host" : "mongo3:27017"
+        }
+      ]
+      };
+      rs.initiate(config);
+      rs.status()
+      '
+
+  # Our Micro services
+
+  auth-service:
+    build:
+      context: ./auth/
+      dockerfile: ./Dockerfile
+    container_name: auth-api
+    networks:
+      - kong-net
+    volumes:
+      - ./auth/src:/usr/src/app/src
+      - /usr/src/app/node_modules
+    depends_on:
+      - kong-database
+      - rabbitmq
+
+  mailer-service:
+    build:
+      context: ./mailer
+      dockerfile: ./Dockerfile
+    container_name: mailer-api
+    networks:
+      - kong-net
+    volumes:
+      - ./mailer/src:/usr/src/app/src
+      - /usr/src/app/node_modules
+    depends_on:
+      - rabbitmq
+
+  logger-service:
+    build:
+      context: ./logger
+      dockerfile: ./Dockerfile
+    container_name: logger-api
+    networks:
+      - kong-net
+    volumes:
+      - ./logger/src:/usr/src/app/src
+      - /usr/src/app/src/node_modules
+      - ./logger/log:/usr/src/app/log
+    depends_on:
+      - rabbitmq
+
+  post-service:
+    build:
+      context: ./postService
+      dockerfile: ./Dockerfile
+    container_name: post-api
+    networks:
+      - kong-net
+    volumes:
+      - ./postService/src:/usr/src/app/src
+      - /usr/src/app/node_modules
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    ports:
+      - 7003:7003
+
+  chat-service:
+    build:
+      context: ./cosmo-chat
+      dockerfile: ./Dockerfile
+    container_name: chat-api
+    networks:
+      - kong-net
+    volumes:
+      - ./cosmo-chat/src:/usr/src/app/src
+      - /usr/src/app/node_modules
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
