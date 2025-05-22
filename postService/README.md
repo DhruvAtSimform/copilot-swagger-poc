@@ -102,6 +102,11 @@ Through multiple iterations with Copilot Agent, we:
 
 5. **Configured Swagger UI** in `main.ts` with proper security definitions
 
+![image](https://github.com/user-attachments/assets/87a9e041-1c99-4648-91f7-dde1eb619679)
+ 
+![image](https://github.com/user-attachments/assets/a0ae1842-27c1-4973-b157-b9d95564fe16)
+
+
 ### Issues and Iterations
 
 We encountered several issues during the implementation:
